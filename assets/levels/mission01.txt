@@ -1,0 +1,84 @@
+# DEUSMOBILE level file. Edit the grid with any text editor.
+# The legend is documented at the top of src/level.rs
+[grid]
+WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+W.RRRRRR..#p............s#T..........R#,,,,,,,,,,,,,,,,W
+W....l....#.hhh..l...hhh.#....l....q.6#,,,,,,,,,,XXXX,,W
+W...t...5.#......O.......#...........7#,,,,,,,,,,XXXX,,W
+W....l....#.hhh..l...hhh.#c...l.......#,,,,,,o,,,XXXX,,W
+W.........v.............a#.......%....#,,,,,,,,,,,,,,,,W
+W####K######GGG##S##GGG########L#######,,,,,,,,,,,,,,,,W
+Wc___l_________l_________f________l___#,,,,,,,,,,,,,,,,W
+W_________a_________g_________________#,,,,,,,,,,,,,,,,W
+W#####D############D######............#,,,,,,,,,,,,,,,,W
+W_p____l____1#....l......#.hhhhh......D,,,o,,,,,,,,,,,,W
+W____________#...........#......l.....#,,,,,,,,,,,,,,,,W
+W_+__________#..2........#...g........#,,,,,,,,,,,,,,,,W
+W##########v###########################,,,,,,,,,,,,,,,,W
+W##########V#####################,,,,,,,,,,,,,,,,,,,,,,W
+W.p....#s==v===l=======l========#,,,o,,,,,,,,,,,,,,o,,,W
+W...l..#====CC====BB====BB=====C#,,,,,,,BBB,,,,,,,,,,,,W
+W..3...D====CC====BB==g=BB======#,,,,,,,BBB,,,,g,,,,,,,W
+W......#============a===========#c,,,,,,,,,,,,,,,,,,BB,W
+W#######==C=====l=======l=====CC#,,,,,,,,,,,,,,,,,,8BB,W
+W==f=====BBB=====BBB===========*K,,,,,,,,,,,,,,,,,,,,,,W
+W========BBB==g==BBB=====CC=====#,,,,,BBB,,,,,,,,,,,,,,W
+W===============================#,,,,,BBB,,,,,,,,o,,,,,W
+W==CC===l=======l=======l====CC=#,,,,,,,,,,,,,,,,,,,,,,W
+W==CC=====================q==CC=#,,,,,,,,,,,,,BB,,,,,,,W
+W=!=======+=====================#,,,,,,,,,,,,,BB,,,,,,,W
+W#####v############L#############,,,,,,,,,,,,,,,,,,,,,,W
+W,,,,,,,,,,,,,,,,,,,,,,,,c,,,,,,,,,,,,,,,,,,,,,,,,,,,,,W
+W,,,,,,,,,o,,,,,,,,,,,,,,,,,,,o,,,,,,,,,,,,,,,,,o,,,,,,W
+W,,,BB,,,,,,,,,,,CC,,,,,,,,,,,,,,,,,BBB,,,,,,,,,,,,,,,,W
+W,,,BB,,,,,g,,,,,CC,,,,,,,,,,,,,,,,,BBB,,,,,#########,,W
+W,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,#.l...N.#,,W
+W,,,,,,,,,,,,,,,,,,,,g,,,,,,,,,,,,,,,,,,,,,,#.+?....#,,W
+W:::PPPP::::::::::::::::::::::::::::::::::::##D######::W
+W:::::::::::::::o:::::::::::::::::::::::o::::::::::::::W
+W~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~W
+W~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~W
+WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+[meta]
+# ---- doors -----------------------------------------------------------
+lock 31,6 strength=3 key=seckey
+lock 19,26 strength=2
+keypad 5,6 code=2187 strength=3
+keypad 32,20 code=5532 strength=2
+# ---- items (marker character -> item) ---------------------------------
+item 1 datacube 0
+item 2 key seckey Security_Office_Key
+item 3 crossbow
+item 5 augcanister
+item 6 rifle
+item 7 ammo_rifle 30
+item 8 datacube 3
+# ---- terminals --------------------------------------------------------
+terminal 26,1 security login=kade_sec pass=nightwatch hack=2
+terminal 2,10 pc mail=5 hack=1
+terminal 2,15 pc mail=2 hack=1
+terminal 11,1 pc mail=4 hack=2
+# ---- patrol routes (first coordinate = guard cell) --------------------
+route 20,8 3,8 36,8
+route 29,12 35,12 35,9 29,9
+route 22,17 22,22 28,22 28,18
+route 14,21 14,22 6,22 6,25 14,25
+route 47,17 47,23 37,23 37,15
+route 11,30 11,27 22,27 22,31 11,31
+route 21,32 40,32 40,28 21,28
+# ---- guards carrying flashlights --------------------------------------
+flashlight 47,17
+flashlight 11,30
+flashlight 21,32
+flashlight 22,17
+# ---- turrets -----------------------------------------------------------
+turret 4,3 always
+# ---- friendly npc ------------------------------------------------------
+npc 50,31 informant
+[notes]
+0|Datacube: IT Reminder|To: Night shift\nThe security office console password has been reset.\n\n  user: kade_sec\n  pass: nightwatch\n\nChange it at first login. I am not resetting it again.\n  - R. Vance, Facility IT|login=kade_sec:nightwatch
+1|Contact: Warehouse code|The contact on the east pier says the warehouse side door keypad (east wall, facing the yard) uses code 5532.|code=5532
+2|Email: Server room|FROM: d.morrow@hk-meridian\nTO: warehouse-staff\nSUBJECT: server room\n\nServer room keypad is now 2187. Stop propping the door open, the turret logs every time you do.|code=2187
+3|Datacube: Rotation|Lobby has one man after 23:00. The camera on the east wall of the warehouse sweeps the yard. There is a blind spot behind the containers.|
+4|LAZARUS Research Log|PROJECT LAZARUS - entry 117\nThe nanite lattice now survives full cardiac arrest in 9 of 12 subjects. Kade wants the core moved off-site before the oversight board audit.\nThe subjects were not volunteers.|
+5|Email: Director Halvorsen|FROM: e.halvorsen\nSUBJECT: tonight\n\nThe core leaves at dawn. Double the dock patrols and keep the lights on. If anyone asks, it is a routine inventory.|
