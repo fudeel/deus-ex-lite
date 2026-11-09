@@ -44,6 +44,9 @@ pub struct Me {
     pub zoom: bool,
     pub speed: f32,
     pub noise_cd: f32,
+    /// team match: who dealt the last damage (`NO_PLAYER` = environment) and with what
+    pub killer: u8,
+    pub killer_weapon: u8,
 }
 
 impl Me {
@@ -76,6 +79,8 @@ impl Me {
             zoom: false,
             speed: 0.0,
             noise_cd: 0.0,
+            killer: NO_PLAYER,
+            killer_weapon: 255,
         }
     }
     pub fn eye(&self) -> Vec3 {
@@ -132,14 +137,39 @@ impl Plugin for PlayerPlugin {
     }
 }
 
-fn reset_player(mut commands: Commands, level: Res<Level>, mut players: ResMut<Players>, settings: Res<Settings>, local: Res<LocalId>) {
+#[allow(clippy::too_many_arguments)]
+fn reset_player(
+    mut commands: Commands,
+    level: Res<Level>,
+    mut players: ResMut<Players>,
+    settings: Res<Settings>,
+    local: Res<LocalId>,
+    mode: Res<GameMode>,
+    mut rng: ResMut<GameRng>,
+) {
+    if *mode == GameMode::Teams {
+        // keep everyone in the match; their avatars are rebuilt with the new level
+        for p in players.map.values_mut() {
+            p.avatar = None;
+        }
+        let team = players.map.get(&local.0).map(|p| p.team).filter(|t| *t < 2).unwrap_or(TEAM_ORANGE);
+        players.map.entry(local.0).or_insert_with(|| PlayerEntry::new(settings.name.clone(), team, false));
+        let (spawn, yaw) = crate::teams::spawn_point(&level, team, &mut rng.0);
+        let mut me = Me::new(spawn, yaw);
+        me.feet.y = 0.05;
+        commands.insert_resource(me);
+        commands.insert_resource(crate::teams::team_loadout());
+        // skills carry over between rounds of a match (reset when a match starts)
+        commands.insert_resource(Augs::default());
+        return;
+    }
     let spawn = level.spawns[local.0 as usize % level.spawns.len()];
     commands.insert_resource(Me::new(spawn, 0.0));
     commands.insert_resource(Inventory::default());
     commands.insert_resource(Skills::default());
     commands.insert_resource(Augs::default());
     players.map.clear();
-    players.map.insert(local.0, PlayerEntry { name: settings.name.clone(), net: PlayerNet::default(), avatar: None, visibility: 0.0 });
+    players.map.insert(local.0, PlayerEntry::new(settings.name.clone(), NO_TEAM, false));
 }
 
 fn player_look(motion: Res<AccumulatedMouseMotion>, ui: Res<UiMode>, settings: Res<Settings>, mut me: ResMut<Me>) {
@@ -246,6 +276,8 @@ fn player_move(
                 let dmg = (-me.fall_v - 13.0) * 9.0;
                 me.health -= dmg;
                 me.hurt = 0.6;
+                me.killer = NO_PLAYER;
+                me.killer_weapon = 255;
             }
             if me.fall_v < -7.0 {
                 req.write(WorldRequest::Noise { pos: a3(me.feet), radius: 7.0 });
@@ -414,11 +446,20 @@ pub fn use_consumable(
     false
 }
 
-fn player_stats(time: Res<Time>, mut me: ResMut<Me>, mut augs: ResMut<Augs>, level: Res<Level>, mut snd: EventWriter<SoundEv>, mut msgs: EventWriter<HudMsg>) {
+fn player_stats(
+    time: Res<Time>,
+    mut me: ResMut<Me>,
+    mut augs: ResMut<Augs>,
+    level: Res<Level>,
+    mode: Res<GameMode>,
+    mut snd: EventWriter<SoundEv>,
+    mut msgs: EventWriter<HudMsg>,
+) {
     let dt = time.delta_secs();
     if me.dead {
         me.dead_t += dt;
-        if me.dead_t > 5.0 {
+        // team match respawns are handled by teams.rs (team spawn points, loadout)
+        if me.dead_t > 5.0 && *mode == GameMode::Campaign {
             let spawn = level.spawns[0];
             let energy = me.energy;
             *me = Me::new(spawn, 0.0);
@@ -457,6 +498,8 @@ fn player_damage(mut evs: EventReader<DamageEv>, mut me: ResMut<Me>, augs: Res<A
             dmg *= 0.5;
         }
         me.health -= dmg;
+        me.killer = e.by;
+        me.killer_weapon = e.weapon;
         me.hurt = (me.hurt + dmg / 25.0).min(1.0);
         snd.write(SoundEv::ui(Sfx::Hurt, (dmg / 20.0).clamp(0.3, 1.0)));
     }
@@ -653,8 +696,11 @@ fn update_flashlight(me: Res<Me>, state: Res<State<AppState>>, mut q: Query<&mut
 }
 
 /// Single player: freeze the world while menus that should pause are open.
-fn pause_time(ui: Res<UiMode>, state: Res<State<AppState>>, mut time: ResMut<Time<Virtual>>) {
-    let pause = *state.get() == AppState::InGame && matches!(*ui, UiMode::Pause | UiMode::Inventory(_) | UiMode::Read(_) | UiMode::AugChoice | UiMode::Complete);
+/// Online the world never stops.
+fn pause_time(ui: Res<UiMode>, state: Res<State<AppState>>, role: Res<NetRole>, mut time: ResMut<Time<Virtual>>) {
+    let pause = *role == NetRole::Offline
+        && *state.get() == AppState::InGame
+        && matches!(*ui, UiMode::Pause | UiMode::Inventory(_) | UiMode::Read(_) | UiMode::AugChoice | UiMode::Complete);
     if pause && !time.is_paused() {
         time.pause();
     } else if !pause && time.is_paused() {

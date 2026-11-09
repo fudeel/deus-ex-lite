@@ -6,10 +6,18 @@
 //!   --quality low|medium|high|ultra
 //!   --shot PATH [--shot-delay SECS]   save a screenshot then quit
 //!   --flashlight --vision   start with the flashlight / vision augmentation on
-// Networking scaffolding (protocol types, roles) is kept for the planned co-op mode.
+//!
+//! Team match (Orange vs Blue):
+//!   --skirmish              start an offline team match against bots
+//!   --host                  host an online team match (port 27777)
+//!   --join ADDR             join an online team match (e.g. 192.168.1.20 or host:port)
+//!   --name NAME --team orange|blue --team-size N
+// Some protocol types (guard / device snapshots) are kept for a future co-op campaign.
 #![allow(dead_code)]
 
 mod audio;
+mod avatars;
+mod bots;
 mod collision;
 mod effects;
 mod game;
@@ -19,11 +27,14 @@ mod items;
 mod level;
 mod materials;
 mod menu;
+mod net;
 mod npc;
 mod player;
 mod render;
+mod teams;
 mod util;
 mod weapons;
+mod wire;
 mod world;
 
 use bevy::audio::{AudioPlugin, SpatialScale};
@@ -42,17 +53,51 @@ struct DevArgs {
     flashlight: bool,
     vision: bool,
     panel: Option<String>,
+    /// team match started from the command line
+    team_start: Option<menu::StartGame>,
 }
 
-fn parse_args() -> (DevArgs, Option<Quality>) {
+#[derive(Default)]
+struct NetArgs {
+    name: Option<String>,
+    join: Option<String>,
+    team: Option<u8>,
+    team_size: Option<u8>,
+}
+
+fn parse_args() -> (DevArgs, Option<Quality>, NetArgs) {
     let args: Vec<String> = std::env::args().collect();
     let mut d = DevArgs { shot_delay: 5.0, ..default() };
     let mut q = None;
+    let mut n = NetArgs::default();
     let mut i = 1;
     while i < args.len() {
         let next = args.get(i + 1).cloned();
         match args[i].as_str() {
             "--start" => d.start = true,
+            "--skirmish" => d.team_start = Some(menu::StartGame::Skirmish),
+            "--host" => d.team_start = Some(menu::StartGame::Host),
+            "--join" => {
+                n.join = next;
+                d.team_start = Some(menu::StartGame::Join);
+                i += 1;
+            }
+            "--name" => {
+                n.name = next;
+                i += 1;
+            }
+            "--team" => {
+                n.team = match next.as_deref() {
+                    Some("orange") => Some(TEAM_ORANGE),
+                    Some("blue") => Some(TEAM_BLUE),
+                    _ => None,
+                };
+                i += 1;
+            }
+            "--team-size" => {
+                n.team_size = next.and_then(|v| v.parse().ok());
+                i += 1;
+            }
             "--flashlight" => d.flashlight = true,
             "--vision" => d.vision = true,
             "--panel" => {
@@ -90,14 +135,26 @@ fn parse_args() -> (DevArgs, Option<Quality>) {
         }
         i += 1;
     }
-    (d, q)
+    (d, q, n)
 }
 
 fn main() {
-    let (dev, quality) = parse_args();
+    let (dev, quality, netargs) = parse_args();
     let mut settings = Settings::default();
     if let Some(q) = quality {
         settings.quality = q;
+    }
+    if let Some(name) = netargs.name {
+        settings.name = name;
+    }
+    if let Some(addr) = netargs.join {
+        settings.join_addr = addr;
+    }
+    if let Some(t) = netargs.team {
+        settings.pref_team = t;
+    }
+    if let Some(n) = netargs.team_size {
+        settings.team_size = n.clamp(1, 6);
     }
     App::new()
         .add_plugins(
@@ -119,6 +176,7 @@ fn main() {
         .init_resource::<UiMode>()
         .init_resource::<UiDirty>()
         .init_resource::<NetRole>()
+        .init_resource::<GameMode>()
         .init_resource::<LocalId>()
         .init_resource::<Players>()
         .init_resource::<util::GameRng>()
@@ -127,6 +185,7 @@ fn main() {
         .add_event::<WorldEv>()
         .add_event::<FxEv>()
         .add_event::<DamageEv>()
+        .add_event::<PlayerDamage>()
         .add_event::<HudMsg>()
         .add_event::<Subtitle>()
         .add_event::<audio::SoundEv>()
@@ -141,6 +200,10 @@ fn main() {
             effects::EffectsPlugin,
             hud::HudPlugin,
             menu::MenuPlugin,
+            net::NetPlugin,
+            teams::TeamsPlugin,
+            bots::BotsPlugin,
+            avatars::AvatarPlugin,
         ))
         .add_systems(Startup, (load_level_res, materials::setup_materials, audio::setup_audio))
         .add_systems(Update, (audio::fx_sounds, audio::play_sounds).chain().in_set(GameSet::Net))
@@ -172,9 +235,17 @@ fn dev_tools(
     mut exit: EventWriter<AppExit>,
     mut t_state: Local<(f32, bool, bool, f32)>,
     mut fps: Local<(u32, f32)>,
+    mut start: EventWriter<menu::StartGame>,
+    mut team_started: Local<bool>,
 ) {
     let (ref mut t_in, ref mut placed, ref mut shot_taken, ref mut shot_t) = *t_state;
     match state.get() {
+        AppState::Menu if dev.team_start.is_some() && !*team_started => {
+            *team_started = true;
+            if let Some(kind) = dev.team_start {
+                start.write(kind);
+            }
+        }
         AppState::Menu if dev.start => next.set(AppState::InGame),
         AppState::InGame => {
             *t_in += time.delta_secs();
@@ -209,7 +280,7 @@ fn dev_tools(
     if let Some(path) = &dev.shot {
         let ready = match state.get() {
             AppState::InGame => true,
-            AppState::Menu => !dev.start,
+            AppState::Menu => !dev.start && dev.team_start.is_none(),
             _ => false,
         };
         if ready {

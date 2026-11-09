@@ -89,6 +89,16 @@ pub enum UiAction {
     InstallAug(u8),
     MenuStart,
     MenuQuit,
+    // ---- team match / online
+    MenuSkirmish,
+    MenuHost,
+    MenuJoin,
+    EditName,
+    EditAddr,
+    TeamSize(i8),
+    CycleTeam,
+    CancelConnect,
+    SwitchTeam,
 }
 
 #[derive(Component)]
@@ -378,8 +388,12 @@ fn update_hud(
     hold: Res<Hold>,
     hud: Res<HudState>,
     state: Res<WorldState>,
+    team: (Res<GameMode>, Res<Players>, Res<LocalId>),
     mut nodes: Query<(&HudEl, Option<&mut Node>, Option<&mut Text>, Option<&mut Visibility>, Option<&mut BackgroundColor>, Option<&mut BorderColor>, Option<&mut TextColor>)>,
 ) {
+    let (mode, players, local) = (&team.0, &team.1, &team.2);
+    let teams = **mode == GameMode::Teams;
+    let my_team = players.team_of(local.0);
     let now = time.elapsed_secs();
     let weapon = inv.equipped_weapon();
     for (el, node, text, vis, bg, border, tcol) in nodes.iter_mut() {
@@ -427,7 +441,14 @@ fn update_hud(
                 }
             }
             HudEl::Objective => {
-                if let Some(mut t) = text {
+                if teams {
+                    if let Some(mut t) = text {
+                        t.0 = format!("> TEAM {}", team_name(my_team));
+                    }
+                    if let Some(mut c) = tcol {
+                        c.0 = team_color(my_team);
+                    }
+                } else if let Some(mut t) = text {
                     let next = (0..3).find(|i| !state.objectives[*i]).map(|i| OBJECTIVES[i]).unwrap_or("Mission complete");
                     t.0 = format!("> {next}");
                 }
@@ -515,7 +536,12 @@ fn update_hud(
             }
             HudEl::DeathText => {
                 if let Some(mut t) = text {
-                    t.0 = format!("Recovering in {:.0}...", (5.0 - me.dead_t).max(0.0));
+                    t.0 = if teams {
+                        let by = if me.killer == NO_PLAYER || me.killer == local.0 { "Killed".to_string() } else { format!("Killed by {}", players.name_of(me.killer)) };
+                        format!("{by} - back in the fight in {:.0}...", (crate::teams::RESPAWN_TIME - me.dead_t).max(0.0))
+                    } else {
+                        format!("Recovering in {:.0}...", (5.0 - me.dead_t).max(0.0))
+                    };
                 }
             }
             HudEl::Belt(i) => {
@@ -640,6 +666,7 @@ fn rebuild_panel(
     data: (Res<Inventory>, Res<Skills>, Res<Augs>, Res<WorldState>, Res<Level>, Res<Settings>),
     sessions: (Res<TermSession>, Res<KeypadState>, Res<TalkState>, Res<HudState>),
     doors: Query<&Door>,
+    online: (Res<GameMode>, Res<NetRole>, Res<Players>, Res<LocalId>, Res<crate::net::Net>),
 ) {
     if last.as_ref() == Some(&*ui) && !dirty.0 {
         return;
@@ -685,8 +712,24 @@ fn rebuild_panel(
         ))
         .with_children(|p| match &*ui {
             UiMode::Pause => {
-                txt(p, "PAUSED", 30.0, C_ACCENT);
+                let (mode, role, players, local, net) = (&online.0, &online.1, &online.2, &online.3, &online.4);
+                let title = if **role == NetRole::Offline { "PAUSED" } else { "MENU" };
+                txt(p, title, 30.0, C_ACCENT);
+                match **role {
+                    NetRole::Host => {
+                        let humans = players.map.values().filter(|p| !p.bot).count();
+                        txt(p, format!("Hosting a team match on port {}  -  {humans} player(s) connected. The game keeps running.", settings.port), 14.0, C_TEAL);
+                    }
+                    NetRole::Client => {
+                        txt(p, format!("Connected to {}  -  the game keeps running.", net.addr), 14.0, C_TEAL);
+                    }
+                    NetRole::Offline => {}
+                }
                 button(p, "Resume", UiAction::Resume, true);
+                if **mode == GameMode::Teams {
+                    let mine = players.team_of(local.0);
+                    button(p, format!("Switch to team {}", team_name(other_team(mine))), UiAction::SwitchTeam, mine < 2);
+                }
                 p.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, ..default() }).with_children(|r| {
                     txt(r, format!("Graphics: {}   ", settings.quality.name()), 16.0, C_TEXT);
                     button(r, "Change", UiAction::CycleQuality, true);
@@ -701,7 +744,12 @@ fn rebuild_panel(
                     13.0,
                     C_DIM,
                 );
-                button(p, "Quit to main menu", UiAction::QuitToMenu, true);
+                let quit = match *online.1 {
+                    NetRole::Host => "End the match (main menu)",
+                    NetRole::Client => "Leave the match (main menu)",
+                    NetRole::Offline => "Quit to main menu",
+                };
+                button(p, quit, UiAction::QuitToMenu, true);
                 button(p, "Quit game", UiAction::QuitGame, true);
             }
             UiMode::Inventory(tab) => inventory_panel(p, *tab, &inv, &skills, &augs, &state, &level, &hud),
@@ -1167,7 +1215,19 @@ fn game_actions(
                 }
                 *ui = UiMode::None;
             }
-            UiAction::MenuStart => {}
+            UiAction::SwitchTeam => {
+                req.write(WorldRequest::SwitchTeam);
+                *ui = UiMode::None;
+            }
+            UiAction::MenuStart
+            | UiAction::MenuSkirmish
+            | UiAction::MenuHost
+            | UiAction::MenuJoin
+            | UiAction::EditName
+            | UiAction::EditAddr
+            | UiAction::TeamSize(_)
+            | UiAction::CycleTeam
+            | UiAction::CancelConnect => {}
         }
     }
 }

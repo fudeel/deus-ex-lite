@@ -185,13 +185,14 @@ fn weapons_fire(
     mut ws: ResMut<WeaponState>,
     phys: Res<Physics>,
     pose: Res<CamPose>,
-    local: Res<LocalId>,
+    ids: (Res<LocalId>, Res<Players>),
     mut rng: ResMut<GameRng>,
     mut req: EventWriter<WorldRequest>,
     mut fx: EventWriter<FxEv>,
     mut snd: EventWriter<SoundEv>,
     mut msgs: EventWriter<HudMsg>,
 ) {
+    let (local, players) = (&ids.0, &ids.1);
     let dt = time.delta_secs();
     ws.cooldown -= dt;
     ws.kick *= 1.0 - (dt * 14.0).min(1.0);
@@ -298,6 +299,16 @@ fn weapons_fire(
                 Body::Turret(id) => {
                     req.write(WorldRequest::HitTurret { id, dmg: 20.0 });
                 }
+                Body::Player(id) | Body::PlayerHead(id) => {
+                    // no friendly fire in the team match
+                    if players.team_of(id) != players.team_of(local.0) {
+                        let dmg = def.dmg * (1.0 + skills.get(Skill::Melee) as f32 * 0.35);
+                        let head = matches!(h.body, Body::PlayerHead(_));
+                        req.write(WorldRequest::HitPlayer { target: id, dmg, kind: DmgKind::Melee, dir: a3(fwd), head, weapon: def.id });
+                        snd.write(SoundEv::at(Sfx::Zap, h.pos, 0.8));
+                    }
+                    fx.write(FxEv { fx: Fx::Shot { from: a3(h.pos), to: a3(h.pos), weapon: 0, impact: impact::FLESH, normal: a3(h.normal) }, remote: false });
+                }
                 _ => {
                     snd.write(SoundEv::at(Sfx::ImpactWall, h.pos, 0.6));
                     req.write(WorldRequest::Noise { pos: a3(h.pos), radius: def.noise });
@@ -347,6 +358,14 @@ fn weapons_fire(
                 Body::Turret(id) => {
                     req.write(WorldRequest::HitTurret { id, dmg: def.dmg });
                     impact::METAL
+                }
+                Body::Player(id) | Body::PlayerHead(id) => {
+                    if players.team_of(id) != players.team_of(local.0) {
+                        let dmg = def.dmg * (1.0 + firearms * 0.12);
+                        let head = matches!(h.body, Body::PlayerHead(_));
+                        req.write(WorldRequest::HitPlayer { target: id, dmg, kind: def.kind, dir: a3(dir), head, weapon: def.id });
+                    }
+                    impact::FLESH
                 }
                 Body::Glass => impact::GLASS,
                 Body::Door(_) => impact::METAL,
