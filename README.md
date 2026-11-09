@@ -129,6 +129,13 @@ shadowed spot lights, SSAO, TAA, wet asphalt with mirror-like puddles, lit rain 
 in light beams, emissive signage and screens, night-vision and cloak grading. Pick a preset in
 the menu or pause screen (LOW disables the expensive passes).
 
+The volumetric light shafts use a patched copy of Bevy 0.16.1's volumetric fog shader
+(`src/shaders/volumetric_fog.wgsl`, registered in `render.rs`). Stock Bevy picks the clustered
+light list once per pixel at the depth where the fog ray starts; with the camera inside the fog
+that is the nearest few metres, so shafts of lamps further away were missing in tile-shaped
+rectangles that flickered as you moved. The patch looks the cluster up at every ray-march step.
+Remove the override when upgrading Bevy (or re-apply the patch to the new shader).
+
 All textures are **procedurally generated** at startup (albedo, normal and roughness/metal maps
 with mipmaps), and all sounds are synthesized, so the game currently ships no art files.
 
