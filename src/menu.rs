@@ -4,6 +4,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 
 use crate::bots::Bots;
+use crate::dxassets::DxAssets;
 use crate::game::*;
 use crate::hud::*;
 use crate::items::Skills;
@@ -79,11 +80,11 @@ fn field(c: &mut bevy::ecs::hierarchy::ChildSpawnerCommands, label: &str, value:
     });
 }
 
-fn spawn_menu(mut commands: Commands, settings: Res<Settings>, hud: Res<HudState>, net: Res<Net>, edit: Res<EditField>) {
-    build_menu(&mut commands, &settings, &hud, &net, *edit);
+fn spawn_menu(mut commands: Commands, settings: Res<Settings>, hud: Res<HudState>, net: Res<Net>, edit: Res<EditField>, dxa: Res<DxAssets>) {
+    build_menu(&mut commands, &settings, &hud, &net, *edit, &dxa);
 }
 
-fn build_menu(commands: &mut Commands, settings: &Settings, hud: &HudState, net: &Net, edit: EditField) {
+fn build_menu(commands: &mut Commands, settings: &Settings, hud: &HudState, net: &Net, edit: EditField, dxa: &DxAssets) {
     let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     commands.spawn((full.clone(), MenuRoot)).with_children(|r| {
         if let Some(v) = &hud.vignette {
@@ -148,13 +149,37 @@ fn build_menu(commands: &mut Commands, settings: &Settings, hud: &HudState, net:
                 c.spawn(Node { height: Val::Px(8.0), ..default() });
                 txt(c, net.status.clone(), 15.0, C_RED);
             }
-            txt(c, "Placeholder procedural art. Drop PNGs in assets/textures to replace surfaces.", 12.0, C_DIM);
+            match &dxa.root {
+                Some(root) => txt(
+                    c,
+                    format!(
+                        "Original Deus Ex assets: {} textures, {} sounds, {} characters from {}",
+                        dxa.textures,
+                        dxa.sounds,
+                        dxa.models.len(),
+                        root.display()
+                    ),
+                    12.0,
+                    C_DIM,
+                ),
+                None => txt(c, "Procedural art. Install Deus Ex (or run with --dx PATH) to use its textures, sounds and characters.", 12.0, C_DIM),
+            };
         });
     });
 }
 
 /// Rebuild the menu whenever something it shows changes.
-fn refresh_menu(mut commands: Commands, settings: Res<Settings>, q: Query<Entity, With<MenuRoot>>, hud: Res<HudState>, net: Res<Net>, edit: Res<EditField>, mut last: Local<String>) {
+#[allow(clippy::too_many_arguments)]
+fn refresh_menu(
+    mut commands: Commands,
+    settings: Res<Settings>,
+    q: Query<Entity, With<MenuRoot>>,
+    hud: Res<HudState>,
+    net: Res<Net>,
+    edit: Res<EditField>,
+    dxa: Res<DxAssets>,
+    mut last: Local<String>,
+) {
     let sig = format!(
         "{}|{}|{}|{}|{}|{}|{:?}|{}",
         settings.quality.name(),
@@ -177,7 +202,7 @@ fn refresh_menu(mut commands: Commands, settings: Res<Settings>, q: Query<Entity
     for e in q.iter() {
         commands.entity(e).despawn();
     }
-    build_menu(&mut commands, &settings, &hud, &net, *edit);
+    build_menu(&mut commands, &settings, &hud, &net, *edit, &dxa);
 }
 
 fn menu_actions(q: Query<(&Interaction, &UiButton), Changed<Interaction>>, mut settings: ResMut<Settings>, mut edit: ResMut<EditField>, mut start: EventWriter<StartGame>) {

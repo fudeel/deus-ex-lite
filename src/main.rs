@@ -7,6 +7,11 @@
 //!   --shot PATH [--shot-delay SECS]   save a screenshot then quit
 //!   --flashlight --vision   start with the flashlight / vision augmentation on
 //!
+//! Original Deus Ex assets (textures, sounds, characters) are used when the game is
+//! installed; see `dxassets.rs`:
+//!   --dx PATH               the Deus Ex folder (default: DEUSEX_DIR or the usual Steam / GOG paths)
+//!   --no-dx                 always use the procedural assets
+//!
 //! Team match (Orange vs Blue):
 //!   --skirmish              start an offline team match against bots
 //!   --host                  host an online team match (port 27777)
@@ -19,6 +24,8 @@ mod audio;
 mod avatars;
 mod bots;
 mod collision;
+mod dx;
+mod dxassets;
 mod effects;
 mod game;
 mod hud;
@@ -65,11 +72,12 @@ struct NetArgs {
     team_size: Option<u8>,
 }
 
-fn parse_args() -> (DevArgs, Option<Quality>, NetArgs) {
+fn parse_args() -> (DevArgs, Option<Quality>, NetArgs, dxassets::DxConfig) {
     let args: Vec<String> = std::env::args().collect();
     let mut d = DevArgs { shot_delay: 5.0, ..default() };
     let mut q = None;
     let mut n = NetArgs::default();
+    let mut dxc = dxassets::DxConfig::default();
     let mut i = 1;
     while i < args.len() {
         let next = args.get(i + 1).cloned();
@@ -98,6 +106,11 @@ fn parse_args() -> (DevArgs, Option<Quality>, NetArgs) {
                 n.team_size = next.and_then(|v| v.parse().ok());
                 i += 1;
             }
+            "--dx" => {
+                dxc.path = next;
+                i += 1;
+            }
+            "--no-dx" => dxc.off = true,
             "--flashlight" => d.flashlight = true,
             "--vision" => d.vision = true,
             "--panel" => {
@@ -135,11 +148,11 @@ fn parse_args() -> (DevArgs, Option<Quality>, NetArgs) {
         }
         i += 1;
     }
-    (d, q, n)
+    (d, q, n, dxc)
 }
 
 fn main() {
-    let (dev, quality, netargs) = parse_args();
+    let (dev, quality, netargs, dxconfig) = parse_args();
     let mut settings = Settings::default();
     if let Some(q) = quality {
         settings.quality = q;
@@ -172,6 +185,7 @@ fn main() {
         )
         .insert_resource(settings)
         .insert_resource(dev)
+        .insert_resource(dxconfig)
         .init_state::<AppState>()
         .init_resource::<UiMode>()
         .init_resource::<UiDirty>()
@@ -204,6 +218,7 @@ fn main() {
             teams::TeamsPlugin,
             bots::BotsPlugin,
             avatars::AvatarPlugin,
+            dxassets::DxPlugin,
         ))
         .add_systems(Startup, (load_level_res, materials::setup_materials, audio::setup_audio))
         .add_systems(Update, (audio::fx_sounds, audio::play_sounds).chain().in_set(GameSet::Net))

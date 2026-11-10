@@ -118,6 +118,14 @@ impl SoundEv {
 #[derive(Resource)]
 pub struct SoundBank(pub HashMap<Sfx, Handle<AudioSource>>);
 
+/// Alternative takes of a sound (e.g. four footsteps); one is picked at random per play.
+#[derive(Resource, Default)]
+pub struct SoundVariants(pub HashMap<Sfx, Vec<Handle<AudioSource>>>);
+
+/// Peak level of each synthesized sound, so replacement recordings can be matched to the mix.
+#[derive(Resource, Default)]
+pub struct SoundPeaks(pub HashMap<Sfx, f32>);
+
 #[derive(Component)]
 pub struct RainLoop;
 
@@ -509,18 +517,45 @@ pub fn setup_audio(mut commands: Commands, mut sources: ResMut<Assets<AudioSourc
     let t0 = std::time::Instant::now();
     let mut sy = Syn { rng: Rng::new(7) };
     let mut bank = HashMap::new();
+    let mut peaks = HashMap::new();
     for s in ALL_SFX {
         let samples = synth(s, &mut sy);
+        peaks.insert(s, samples.iter().fold(0.0f32, |m, x| m.max(x.abs())));
         bank.insert(s, sources.add(AudioSource { bytes: wav(&samples).into() }));
     }
     info!("synthesized {} sounds in {:.2}s", bank.len(), t0.elapsed().as_secs_f32());
     commands.insert_resource(SoundBank(bank));
+    commands.insert_resource(SoundPeaks(peaks));
+    commands.init_resource::<SoundVariants>();
 }
 
-pub fn play_sounds(mut commands: Commands, mut evs: EventReader<SoundEv>, bank: Option<Res<SoundBank>>, settings: Res<Settings>) {
+pub fn play_sounds(
+    mut commands: Commands,
+    mut evs: EventReader<SoundEv>,
+    bank: Option<Res<SoundBank>>,
+    variants: Option<Res<SoundVariants>>,
+    settings: Res<Settings>,
+    mut pick: Local<u32>,
+) {
     let Some(bank) = bank else { return };
     for e in evs.read() {
-        let Some(h) = bank.0.get(&e.sfx) else { continue };
+        let alt = variants.as_ref().and_then(|v| v.0.get(&e.sfx)).filter(|v| !v.is_empty());
+        let h = match alt {
+            Some(list) => {
+                // xorshift: a cheap, good enough shuffle between takes
+                *pick ^= *pick << 13;
+                *pick ^= *pick >> 17;
+                *pick ^= *pick << 5;
+                if *pick == 0 {
+                    *pick = 0x9E37_79B9;
+                }
+                &list[*pick as usize % list.len()]
+            }
+            None => match bank.0.get(&e.sfx) {
+                Some(h) => h,
+                None => continue,
+            },
+        };
         let vol = e.vol * settings.volume;
         let mut ps = PlaybackSettings { mode: PlaybackMode::Despawn, ..default() }.with_volume(Volume::Linear(vol));
         match e.pos {

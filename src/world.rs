@@ -427,7 +427,7 @@ pub fn spawn_level(
         let door = Door { id: d.id, kind: d.kind, open: false, locked, t: 0.0, along_x: d.along_x, base, size, npc_timer: 0.0 };
         let aabb = door.aabb();
         commands.spawn((
-            Mesh3d(shapes.cube.clone()),
+            Mesh3d(shapes.slab.clone()),
             MeshMaterial3d(mat),
             Transform::from_translation(base).with_scale(size),
             door,

@@ -499,6 +499,45 @@ fn tex_water(u: f32, v: f32) -> Px {
     Px::new(Vec3::new(0.012, 0.02, 0.024), n * 0.6 + n2 * 0.4, 0.03, 0.0)
 }
 
+/// Unit cube with every side face mapped upright (u left to right as seen from outside,
+/// v top to bottom) plus tangents, unlike `Cuboid` whose side faces are rotated / flipped.
+/// Door and grate textures (one picture per face) need this to read correctly.
+pub fn slab_mesh() -> Mesh {
+    use bevy::render::mesh::{Indices, PrimitiveTopology};
+    let mut pos: Vec<[f32; 3]> = vec![];
+    let mut nor: Vec<[f32; 3]> = vec![];
+    let mut uv: Vec<[f32; 2]> = vec![];
+    let mut tan: Vec<[f32; 4]> = vec![];
+    let mut idx: Vec<u32> = vec![];
+    // (outward normal, right as seen from outside, up as seen from outside)
+    let faces = [
+        (Vec3::Z, Vec3::X, Vec3::Y),
+        (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y),
+        (Vec3::X, Vec3::NEG_Z, Vec3::Y),
+        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+        (Vec3::Y, Vec3::X, Vec3::NEG_Z),
+        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+    ];
+    for (n, r, u) in faces {
+        let base = pos.len() as u32;
+        let w = if n.cross(r).dot(-u) > 0.0 { 1.0 } else { -1.0 };
+        for (sr, su) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let p = n * 0.5 + r * (0.5 * sr) + u * (0.5 * su);
+            pos.push(p.to_array());
+            nor.push(n.to_array());
+            uv.push([0.5 + 0.5 * sr, 0.5 - 0.5 * su]);
+            tan.push([r.x, r.y, r.z, w]);
+        }
+        idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nor)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, tan)
+        .with_inserted_indices(Indices::U32(idx))
+}
+
 pub fn surf_name(s: Surf) -> String {
     match s {
         Surf::Container(v) => format!("container{v}"),
@@ -575,6 +614,8 @@ impl Mats {
 #[derive(Resource)]
 pub struct Shapes {
     pub cube: Handle<Mesh>,
+    /// unit cube whose side faces show their texture upright (doors, grates)
+    pub slab: Handle<Mesh>,
     pub sphere: Handle<Mesh>,
     pub sphere_lo: Handle<Mesh>,
     pub cylinder: Handle<Mesh>,
@@ -890,6 +931,7 @@ pub fn setup_materials(
 
     commands.insert_resource(Shapes {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        slab: meshes.add(slab_mesh()),
         sphere: meshes.add(Sphere::new(0.5).mesh().uv(24, 16)),
         sphere_lo: meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap()),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0)),

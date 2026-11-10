@@ -1,3 +1,9 @@
 /target
 *.png.tmp
 /screenshots
+# a local copy of / link to the original Deus Ex data (never commit it: not redistributable)
+/deusex
+*.utx
+*.uax
+*.umx
+*.u

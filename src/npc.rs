@@ -112,7 +112,8 @@ pub struct Rig {
     pub r_arm: Entity,
     pub visor: Option<Entity>,
     pub light: Option<Entity>,
-    /// team-match avatars: where the held weapon is attached
+    /// where the held weapon is attached (team-match avatars: an empty `HandMount` that is
+    /// filled with the current weapon; guards: their gun)
     pub hand: Option<Entity>,
     pub phase: f32,
     pub down: f32,
@@ -284,7 +285,7 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
                             if let HumanStyle::Guard { rifle } = style {
                                 let w = if *rifle { WeaponKind::Rifle } else { WeaponKind::Pistol };
                                 let rot = Quat::from_rotation_x(-FRAC_PI_2) * Quat::from_rotation_z(PI);
-                                a.spawn((Transform::from_xyz(0.0, -0.64, -0.02).with_rotation(rot), Visibility::default())).with_children(|g| spawn_parts(g, &weapon_parts(w, mats, s)));
+                                hand = Some(a.spawn((Transform::from_xyz(0.0, -0.64, -0.02).with_rotation(rot), Visibility::default())).with_children(|g| spawn_parts(g, &weapon_parts(w, mats, s))).id());
                             }
                             if agent_team.is_some() {
                                 // empty hand mount: the avatar system fills it with the held weapon

@@ -31,6 +31,8 @@ Dev / test flags (`cargo run --release -- <flags>`):
 | `--host` | host an online team match (TCP port 27777) |
 | `--join ADDR` | join an online team match (`192.168.1.20`, `my.host.net:27777`, ...) |
 | `--name NAME`, `--team orange\|blue`, `--team-size N` | team match settings |
+| `--dx PATH` | folder of your Deus Ex installation (see below) |
+| `--no-dx` | ignore an installed Deus Ex and use the procedural assets |
 
 ## Controls
 
@@ -136,8 +138,40 @@ that is the nearest few metres, so shafts of lamps further away were missing in 
 rectangles that flickered as you moved. The patch looks the cluster up at every ray-march step.
 Remove the override when upgrading Bevy (or re-apply the patch to the new shader).
 
-All textures are **procedurally generated** at startup (albedo, normal and roughness/metal maps
-with mipmaps), and all sounds are synthesized, so the game currently ships no art files.
+By default all textures are **procedurally generated** at startup (albedo, normal and
+roughness/metal maps with mipmaps), and all sounds are synthesized, so the game ships no art files.
+
+### Using the original Deus Ex assets
+
+If you own **Deus Ex (2000, Game of the Year edition on Steam or GOG)**, DEUSMOBILE reads its
+textures, sounds and character models straight from your installation at startup - nothing is
+copied into this repository or the build. The game folder is found automatically at the usual
+Steam / GOG locations (`C:\Program Files (x86)\Steam\steamapps\common\Deus Ex`, ...);
+otherwise pass `--dx "D:\Games\Deus Ex"`, set `DEUSEX_DIR`, or put the folder (or a link to it)
+next to the game as `deusex/`. The main menu shows what was loaded; `--no-dx` turns it off.
+
+What is used (`src/dxassets.rs` has the full tables):
+
+- **Surfaces** - concrete, asphalt, tiles, carpet, diamond-plate floors, lab / office / hangar /
+  brick / warehouse walls, ceiling tiles, gravel roofs, ducts, crates, shipping containers,
+  marble counters, doors, blast doors, vent grates and water, from `Textures/CoreTex*.utx`,
+  `UNATCO.utx` and `Dockyard.utx`. A normal map and a roughness / metal map are derived from
+  each texture so they still respond to the dynamic lights. Server racks and skirting trim
+  keep their procedural look.
+- **Sounds** - weapons, impacts, footsteps (four takes each, picked at random), doors, keypads,
+  hacking, augmentations, pickups, pain, the alarm klaxon and the harbour wind, from
+  `System/DeusExSounds.u`, `Sounds/MoverSFX.uax` and `Sounds/Ambient.uax`, level-matched to the
+  synthesized mix. Rain and guard radio chatter stay synthesized.
+- **Characters** - campaign guards are NSF terrorists, the informant is a trench-coated smuggler,
+  and in the team match Orange plays NSF and Blue UNATCO (the multiplayer `mp_jumpsuit` model).
+  They use the original vertex animations (idle, walk, run, crouch-walk, aim, death...),
+  cross-faded, and weapons ride on the model's own weapon triangle.
+
+Deus Ex keeps its data in Unreal Engine 1 packages; `src/dx/` is a small reader for them
+(name / import / export tables, tagged properties, P8 + palette / DXT1 / RGBA8 textures, WAV
+sounds and Deus Ex's 16-bit `LodMesh` vertex format). The original assets are not open source:
+they stay on your machine and are only read, never redistributed. The longer-term plan is to
+replace them with original open assets.
 
 ### Replacing textures with your own art
 
@@ -171,6 +205,7 @@ and `[notes]` (datacube and email texts). The full legend is at the top of `src/
 | `level.rs` | map parsing, cell column model, merged level meshes |
 | `collision.rs` | grid DDA raycasts, swept box movement with step-up |
 | `materials.rs` | procedural PBR textures, material and mesh library |
+| `dxassets.rs`, `dx/` | optional original Deus Ex textures / sounds / characters read from an installed copy |
 | `world.rs` | spawning, doors, lights, pickups, terminals, mission flow, light registry |
 | `player.rs` | first-person controller, augmentations, visibility, damage |
 | `weapons.rs` | firing, spread, reload, view model |
