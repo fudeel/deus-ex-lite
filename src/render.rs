@@ -7,8 +7,10 @@ use bevy::pbr::{
     DirectionalLightShadowMap, DistanceFog, FogFalloff, PointLightShadowMap, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel,
     VolumetricFog,
 };
+use bevy::asset::AssetId;
 use bevy::prelude::*;
 use bevy::render::camera::Exposure;
+use bevy::render::render_resource::Shader;
 use bevy::render::view::ColorGrading;
 
 use crate::game::*;
@@ -19,10 +21,36 @@ use crate::player::*;
 /// Base camera exposure. Lower = brighter image.
 pub const BASE_EV100: f32 = 5.9;
 
+/// Asset id of Bevy 0.16.1's internal volumetric fog shader (`VOLUMETRIC_FOG_HANDLE`, which is
+/// private to bevy_pbr).
+const VOLUMETRIC_FOG_SHADER_UUID: u128 = 0x481f474c_2024_44bb_8f79_f7c05ced95ea;
+
+/// Replace Bevy's volumetric fog shader with our patched copy (`src/shaders/volumetric_fog.wgsl`).
+///
+/// Bevy 0.16.1 picks the clustered-light list once per pixel at the depth where the fog ray
+/// starts. The camera is always inside our fog volume, so that is the nearest depth slice, and
+/// a street lamp's shaft only showed up in screen tiles whose first few metres touched its
+/// cone: tile-shaped holes in the light shafts that flickered while moving. The patched shader
+/// looks the cluster up at every ray-march step. Must run after `DefaultPlugins` (it does: the
+/// plugin is added later), which register the original shader.
+fn override_volumetric_fog_shader(app: &mut App) {
+    let id: AssetId<Shader> = AssetId::Uuid { uuid: bevy::asset::uuid::Uuid::from_u128(VOLUMETRIC_FOG_SHADER_UUID) };
+    match app.world_mut().get_resource_mut::<Assets<Shader>>() {
+        Some(mut shaders) => {
+            if !shaders.contains(id) {
+                warn!("volumetric fog shader not found under the expected id - is this still Bevy 0.16?");
+            }
+            shaders.insert(id, Shader::from_wgsl(include_str!("shaders/volumetric_fog.wgsl"), "deusmobile/shaders/volumetric_fog.wgsl"));
+        }
+        None => warn!("no shader assets: volumetric fog fix not applied"),
+    }
+}
+
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
+        override_volumetric_fog_shader(app);
         app.insert_resource(ClearColor(Color::srgb(0.004, 0.006, 0.011)))
             .insert_resource(AmbientLight { color: Color::srgb(0.45, 0.55, 0.8), brightness: 15.0, affects_lightmapped_meshes: true })
             .insert_resource(DirectionalLightShadowMap { size: 2048 })

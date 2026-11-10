@@ -98,6 +98,10 @@ impl Guard {
     }
 }
 
+/// Where a team-match avatar holds its weapon (children are rebuilt when the weapon changes).
+#[derive(Component)]
+pub struct HandMount;
+
 #[derive(Component)]
 pub struct Rig {
     pub body: Entity,
@@ -108,6 +112,9 @@ pub struct Rig {
     pub r_arm: Entity,
     pub visor: Option<Entity>,
     pub light: Option<Entity>,
+    /// where the held weapon is attached (team-match avatars: an empty `HandMount` that is
+    /// filled with the current weapon; guards: their gun)
+    pub hand: Option<Entity>,
     pub phase: f32,
     pub down: f32,
     pub visor_on: bool,
@@ -180,6 +187,8 @@ impl Plugin for NpcPlugin {
 pub enum HumanStyle {
     Guard { rifle: bool },
     Informant,
+    /// team-match operative (players and bots)
+    Agent { team: u8 },
 }
 
 fn part(p: &mut ChildSpawnerCommands, s: &Shapes, m: &Handle<StandardMaterial>, pos: Vec3, size: Vec3) -> Entity {
@@ -193,8 +202,13 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
     let (torso, limbs, legs) = match style {
         HumanStyle::Guard { .. } => (mats.guard_armor.clone(), mats.guard_armor.clone(), mats.guard_cloth.clone()),
         HumanStyle::Informant => (mats.npc_jacket.clone(), mats.npc_jacket.clone(), mats.npc_pants.clone()),
+        HumanStyle::Agent { .. } => (mats.coat.clone(), mats.coat.clone(), mats.guard_cloth.clone()),
     };
     let is_guard = matches!(style, HumanStyle::Guard { .. });
+    let agent_team = match style {
+        HumanStyle::Agent { team } => Some((*team).min(1) as usize),
+        _ => None,
+    };
     let root = commands.spawn((tf, Visibility::default(), LevelEntity)).id();
     let mut head = Entity::PLACEHOLDER;
     let mut l_leg = Entity::PLACEHOLDER;
@@ -202,6 +216,7 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
     let mut l_arm = Entity::PLACEHOLDER;
     let mut r_arm = Entity::PLACEHOLDER;
     let mut visor = None;
+    let mut hand = None;
     let body = commands
         .spawn((Transform::default(), Visibility::default()))
         .with_children(|b| {
@@ -209,6 +224,14 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
             if is_guard {
                 part(b, s, &mats.gun_dark, Vec3::new(0.0, 1.27, -0.02), Vec3::new(0.47, 0.34, 0.28));
                 part(b, s, &mats.coat_accent, Vec3::new(0.0, 1.38, -0.162), Vec3::new(0.2, 0.012, 0.004));
+            }
+            if let Some(t) = agent_team {
+                // trench coat skirt, team-painted chest rig and a dim team stripe
+                part(b, s, &mats.coat, Vec3::new(0.0, 0.66, 0.015), Vec3::new(0.46, 0.5, 0.27));
+                part(b, s, &mats.team_paint[t], Vec3::new(0.0, 1.25, -0.03), Vec3::new(0.4, 0.26, 0.24));
+                part(b, s, &mats.team_glow[t], Vec3::new(0.0, 1.31, -0.152), Vec3::new(0.24, 0.014, 0.004));
+                part(b, s, &mats.team_paint[t], Vec3::new(-0.27, 1.42, 0.0), Vec3::new(0.16, 0.1, 0.2));
+                part(b, s, &mats.team_paint[t], Vec3::new(0.27, 1.42, 0.0), Vec3::new(0.16, 0.1, 0.2));
             }
             part(b, s, &mats.black, Vec3::new(0.0, 0.93, 0.0), Vec3::new(0.42, 0.07, 0.25));
             part(b, s, &legs, Vec3::new(0.0, 0.85, 0.0), Vec3::new(0.38, 0.16, 0.22));
@@ -228,6 +251,9 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
                             ))
                             .id(),
                         );
+                    } else if agent_team.is_some() {
+                        h.spawn((Mesh3d(s.sphere.clone()), MeshMaterial3d(mats.hair.clone()), Transform::from_xyz(0.0, 0.16, 0.015).with_scale(Vec3::new(0.235, 0.17, 0.235))));
+                        h.spawn((Mesh3d(s.cube.clone()), MeshMaterial3d(mats.shades.clone()), Transform::from_xyz(0.0, 0.12, -0.11).with_scale(Vec3::new(0.18, 0.035, 0.03))));
                     } else {
                         h.spawn((Mesh3d(s.cube.clone()), MeshMaterial3d(mats.npc_pants.clone()), Transform::from_xyz(0.0, 0.22, 0.0).with_scale(Vec3::new(0.24, 0.07, 0.25))));
                         h.spawn((Mesh3d(s.cube.clone()), MeshMaterial3d(mats.npc_pants.clone()), Transform::from_xyz(0.0, 0.19, -0.13).with_scale(Vec3::new(0.22, 0.02, 0.1))));
@@ -259,7 +285,17 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
                             if let HumanStyle::Guard { rifle } = style {
                                 let w = if *rifle { WeaponKind::Rifle } else { WeaponKind::Pistol };
                                 let rot = Quat::from_rotation_x(-FRAC_PI_2) * Quat::from_rotation_z(PI);
-                                a.spawn((Transform::from_xyz(0.0, -0.64, -0.02).with_rotation(rot), Visibility::default())).with_children(|g| spawn_parts(g, &weapon_parts(w, mats, s)));
+                                hand = Some(a.spawn((Transform::from_xyz(0.0, -0.64, -0.02).with_rotation(rot), Visibility::default())).with_children(|g| spawn_parts(g, &weapon_parts(w, mats, s))).id());
+                            }
+                            if agent_team.is_some() {
+                                // empty hand mount: the avatar system fills it with the held weapon
+                                let rot = Quat::from_rotation_x(-FRAC_PI_2) * Quat::from_rotation_z(PI);
+                                hand = Some(a.spawn((Transform::from_xyz(0.0, -0.64, -0.02).with_rotation(rot), Visibility::default(), HandMount)).id());
+                            }
+                        }
+                        if slot == 0 {
+                            if let Some(t) = agent_team {
+                                part(a, s, &mats.team_glow[t], Vec3::new(0.0, -0.16, 0.0), Vec3::new(0.115, 0.03, 0.125));
                             }
                         }
                     })
@@ -273,7 +309,7 @@ pub fn spawn_humanoid(commands: &mut Commands, style: &HumanStyle, mats: &Mats, 
         })
         .id();
     commands.entity(root).add_child(body);
-    (root, Rig { body, head, l_leg, r_leg, l_arm, r_arm, visor, light: None, phase: 0.0, down: 0.0, visor_on: true })
+    (root, Rig { body, head, l_leg, r_leg, l_arm, r_arm, visor, light: None, hand, phase: 0.0, down: 0.0, visor_on: true })
 }
 
 pub fn spawn_npcs(commands: &mut Commands, lvl: &Level, mats: &Mats, shapes: &Shapes, settings: &Settings, phys: &mut Physics) {
@@ -458,10 +494,15 @@ pub fn spawn_npcs(commands: &mut Commands, lvl: &Level, mats: &Mats, shapes: &Sh
 // ------------------------------------------------------------------ pathfinding
 
 fn walkable(level: &Level, closed: &HashSet<(i32, i32)>, x: i32, z: i32) -> bool {
-    level.nav_walkable(x, z) && !closed.contains(&(x, z))
+    walkable_ex(level, closed, x, z, false)
 }
 
-fn line_clear(level: &Level, closed: &HashSet<(i32, i32)>, a: Vec3, b: Vec3) -> bool {
+fn walkable_ex(level: &Level, closed: &HashSet<(i32, i32)>, x: i32, z: i32, vents: bool) -> bool {
+    let ok = if vents { level.nav_walkable_vents(x, z) } else { level.nav_walkable(x, z) };
+    ok && !closed.contains(&(x, z))
+}
+
+fn line_clear(level: &Level, closed: &HashSet<(i32, i32)>, a: Vec3, b: Vec3, vents: bool) -> bool {
     let d = b - a;
     let len = Vec2::new(d.x, d.z).length();
     if len < 0.01 {
@@ -474,7 +515,7 @@ fn line_clear(level: &Level, closed: &HashSet<(i32, i32)>, a: Vec3, b: Vec3) -> 
         let p = a + d * (i as f32 / steps as f32);
         for o in [Vec3::ZERO, side, -side] {
             let (x, z) = Level::cell_of(p + o);
-            if !walkable(level, closed, x, z) {
+            if !walkable_ex(level, closed, x, z, vents) {
                 return false;
             }
         }
@@ -483,6 +524,12 @@ fn line_clear(level: &Level, closed: &HashSet<(i32, i32)>, a: Vec3, b: Vec3) -> 
 }
 
 pub fn find_path(level: &Level, closed: &HashSet<(i32, i32)>, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+    find_path_ex(level, closed, from, to, false)
+}
+
+/// A* over the cell grid. `vents`: crawl ducts are walkable too (team-match bots).
+pub fn find_path_ex(level: &Level, closed: &HashSet<(i32, i32)>, from: Vec3, to: Vec3, vents: bool) -> Option<Vec<Vec3>> {
+    let walkable = |level: &Level, closed: &HashSet<(i32, i32)>, x: i32, z: i32| walkable_ex(level, closed, x, z, vents);
     let (sx, sz) = Level::cell_of(from);
     let (mut gx, mut gz) = Level::cell_of(to);
     let mut exact = true;
@@ -570,7 +617,7 @@ pub fn find_path(level: &Level, closed: &HashSet<(i32, i32)>, from: Vec3, to: Ve
     let mut i = 0;
     while i < cells.len() {
         let mut j = cells.len() - 1;
-        while j > i && !line_clear(level, closed, anchor, cells[j]) {
+        while j > i && !line_clear(level, closed, anchor, cells[j], vents) {
             j -= 1;
         }
         out.push(cells[j]);
@@ -627,7 +674,7 @@ fn npc_bodies(
     }
 }
 
-fn npc_lights(mut reg: ResMut<LightReg>, guards: Query<&Guard>) {
+pub fn npc_lights(mut reg: ResMut<LightReg>, guards: Query<&Guard>) {
     reg.dynamic.clear();
     for g in guards.iter() {
         if g.flashlight && g.conscious() {
@@ -1070,7 +1117,7 @@ fn guard_ai(
                             }
                         };
                         if hit && s.id == local.0 {
-                            dmg.write(DamageEv { amount: if g.rifle { 7.0 } else { 10.0 }, from: muzzle });
+                            dmg.write(DamageEv { amount: if g.rifle { 7.0 } else { 10.0 }, from: muzzle, by: NO_PLAYER, weapon: if g.rifle { 11 } else { 10 } });
                         }
                         fx.write(FxEv { fx: Fx::Shot { from: a3(muzzle), to: a3(end), weapon: if g.rifle { 11 } else { 10 }, impact: imp, normal: [0.0, 1.0, 0.0] }, remote: false });
                         snd.write(SoundEv::at(Sfx::GuardShot, muzzle, 0.9));
@@ -1346,7 +1393,7 @@ fn turret_ai(
             let end = if hit {
                 if let Some(id) = pid {
                     if id == local.0 {
-                        dmg.write(DamageEv { amount: 6.0, from: muzzle });
+                        dmg.write(DamageEv { amount: 6.0, from: muzzle, by: NO_PLAYER, weapon: 12 });
                     }
                 }
                 if let Some(gid) = gid {

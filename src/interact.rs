@@ -25,6 +25,10 @@ pub enum HoldKind {
         door: u16,
         picks: u16,
     },
+    /// team match: hacking terminal `idx`
+    Hack {
+        idx: u8,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -144,7 +148,9 @@ fn update_focus(
     guards: Query<&Guard>,
     pickups: Query<&Pickup>,
     mut focus: ResMut<Focus>,
+    team: (Res<crate::teams::MatchState>, Res<Players>, Res<LocalId>),
 ) {
+    let (ms, players, local) = (&team.0, &team.1, &team.2);
     focus.target = None;
     focus.prompt.clear();
     focus.sub.clear();
@@ -233,6 +239,25 @@ fn update_focus(
             focus.prompt = if state.looted.contains(&id) { "Body (searched)".into() } else { "[F] Search body".into() };
             focus.sub = if dead { "Dead".into() } else { "Unconscious".into() };
         }
+        Interact::Objective => {
+            focus.prompt = "[F] Take the prototype".into();
+            focus.sub = "Carry it to your team's extraction zone".into();
+        }
+        Interact::HackTerm(i) => {
+            let my_team = players.team_of(local.0);
+            let owner = ms.net.hack_owner.get(i as usize).copied().unwrap_or(NO_TEAM);
+            let letter = crate::teams::TERM_LETTERS.get(i as usize).copied().unwrap_or("?");
+            if ms.net.winner.is_some() {
+                focus.prompt = format!("Terminal {letter}");
+            } else if owner == my_team {
+                focus.prompt = format!("Terminal {letter} - held by your team");
+                focus.sub = "Defend it: the enemy can hack it back".into();
+            } else {
+                let t = crate::teams::hack_time(owner, skills.get(Skill::Computer));
+                focus.prompt = format!("[Hold F] Hack terminal {letter} ({t:.0}s)");
+                focus.sub = if owner == NO_TEAM { "Uplink idle".into() } else { format!("Held by team {}", team_name(owner)) };
+            }
+        }
     }
 }
 
@@ -249,14 +274,42 @@ fn use_focus(
     mut inv: ResMut<Inventory>,
     mut hold: ResMut<Hold>,
     mut ui: ResMut<UiMode>,
-    mut dirty: ResMut<UiDirty>,
-    mut sessions: (ResMut<TermSession>, ResMut<KeypadState>, ResMut<TalkState>),
+    mut sessions: (ResMut<TermSession>, ResMut<KeypadState>, ResMut<TalkState>, ResMut<UiDirty>),
     mut req: EventWriter<WorldRequest>,
     mut snd: EventWriter<SoundEv>,
     mut msgs: EventWriter<HudMsg>,
+    team: (Res<crate::teams::MatchState>, Res<Players>, Res<LocalId>),
 ) {
-    let (term, keypad, talk) = (&mut sessions.0, &mut sessions.1, &mut sessions.2);
+    let (term, keypad, talk, dirty) = (&mut sessions.0, &mut sessions.1, &mut sessions.2, &mut sessions.3);
+    let (ms, players, local) = (&team.0, &team.1, &team.2);
     let dt = time.delta_secs();
+    if let HoldKind::Hack { idx } = hold.kind {
+        let owner = ms.net.hack_owner.get(idx as usize).copied().unwrap_or(NO_TEAM);
+        let still = keys.pressed(KeyCode::KeyF)
+            && focus.target == Some(Interact::HackTerm(idx))
+            && *ui == UiMode::None
+            && owner != players.team_of(local.0)
+            && ms.net.winner.is_none();
+        if !still {
+            hold.kind = HoldKind::None;
+        } else {
+            hold.t += dt;
+            hold.sound_t -= dt;
+            if hold.sound_t <= 0.0 {
+                hold.sound_t = 0.45;
+                snd.write(SoundEv::ui(Sfx::Hack, 0.35));
+            }
+            if hold.t >= hold.total {
+                hold.kind = HoldKind::None;
+                req.write(WorldRequest::HackObjective { idx });
+                // hacking is noisy work: nearby enemies may hear the uplink
+                if let Some(p) = players.map.get(&local.0) {
+                    req.write(WorldRequest::Noise { pos: p.net.pos, radius: 8.0 });
+                }
+            }
+        }
+        return;
+    }
     // hold action in progress
     if let HoldKind::Pick { door, picks } = hold.kind {
         let still = keys.pressed(KeyCode::KeyF) && focus.target == Some(Interact::Door(door)) && *ui == UiMode::None;
@@ -358,6 +411,20 @@ fn use_focus(
         Interact::Body(id) => {
             if !state.looted.contains(&id) {
                 req.write(WorldRequest::LootBody { id });
+            }
+        }
+        Interact::Objective => {
+            req.write(WorldRequest::TakeObjective);
+        }
+        Interact::HackTerm(idx) => {
+            let owner = ms.net.hack_owner.get(idx as usize).copied().unwrap_or(NO_TEAM);
+            if ms.net.winner.is_none() && owner != players.team_of(local.0) {
+                hold.kind = HoldKind::Hack { idx };
+                hold.t = 0.0;
+                hold.total = crate::teams::hack_time(owner, skills.get(Skill::Computer));
+                hold.sound_t = 0.0;
+            } else {
+                snd.write(SoundEv::ui(Sfx::Denied, 0.5));
             }
         }
     }

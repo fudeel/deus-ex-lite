@@ -114,6 +114,21 @@ fn handle_fx(
         let n = v3(*normal).normalize_or_zero();
         let d = to - from;
         let len = d.length();
+        // shots relayed from other players: we also need to hear them
+        if e.remote {
+            let sfx = match *weapon {
+                0 => Some((Sfx::Zap, 0.8)),
+                1 => Some((Sfx::Pistol, 0.9)),
+                2 => Some((Sfx::Crossbow, 0.5)),
+                3 => Some((Sfx::Rifle, 0.9)),
+                10 | 11 => Some((Sfx::GuardShot, 0.9)),
+                12 => Some((Sfx::TurretShot, 0.8)),
+                _ => None,
+            };
+            if let Some((sfx, vol)) = sfx {
+                snd.write(SoundEv::at(sfx, from, vol));
+            }
+        }
         // tracer
         if *weapon != 0 && len > 0.5 {
             let mid = from + d * 0.5;

@@ -96,6 +96,10 @@ pub enum Interact {
     Switch(u16),
     Npc(u16),
     Body(u16),
+    /// team match: the stealable prototype
+    Objective,
+    /// team match: hackable terminal (0..3)
+    HackTerm(u8),
 }
 
 #[derive(Component, Clone)]
@@ -134,6 +138,8 @@ pub struct InfolinkQueue(pub Vec<u16>);
 
 #[derive(Resource, Default)]
 pub struct LevelMeshCache {
+    /// hash of the level the meshes were built for
+    pub hash: u64,
     pub surfs: Vec<(Surf, Handle<Mesh>)>,
     pub glass: Option<Handle<Mesh>>,
     pub water: Option<Handle<Mesh>>,
@@ -203,10 +209,8 @@ impl Plugin for WorldPlugin {
             .add_systems(Update, rebuild_bodies.in_set(GameSet::Input))
             .add_systems(Update, update_light_registry.in_set(GameSet::Input))
             .add_systems(Update, route_requests.in_set(GameSet::Route))
-            .add_systems(
-                Update,
-                (authority_world, mission_authority, auto_close_doors).in_set(GameSet::Authority).run_if(is_authority).run_if(in_game),
-            )
+            .add_systems(Update, (authority_world, auto_close_doors).in_set(GameSet::Authority).run_if(is_authority).run_if(in_game))
+            .add_systems(Update, mission_authority.in_set(GameSet::Authority).run_if(is_authority).run_if(in_game).run_if(campaign_mode))
             .add_systems(Update, apply_world.in_set(GameSet::Apply))
             .add_systems(Update, (animate_doors, animate_lights, spin, animate_water).in_set(GameSet::Present));
     }
@@ -254,7 +258,13 @@ pub fn spawn_level(
     bank: Option<Res<SoundBank>>,
 ) {
     let lvl = &*level;
-    // ---- static geometry (built once, cached)
+    // ---- static geometry (built once per level, cached)
+    if cache.hash != lvl.hash {
+        cache.surfs.clear();
+        cache.glass = None;
+        cache.water = None;
+        cache.hash = lvl.hash;
+    }
     if cache.surfs.is_empty() {
         let t0 = std::time::Instant::now();
         for (s, m) in build_level_meshes(lvl) {
@@ -417,7 +427,7 @@ pub fn spawn_level(
         let door = Door { id: d.id, kind: d.kind, open: false, locked, t: 0.0, along_x: d.along_x, base, size, npc_timer: 0.0 };
         let aabb = door.aabb();
         commands.spawn((
-            Mesh3d(shapes.cube.clone()),
+            Mesh3d(shapes.slab.clone()),
             MeshMaterial3d(mat),
             Transform::from_translation(base).with_scale(size),
             door,
@@ -598,7 +608,7 @@ pub fn update_light_registry(mut reg: ResMut<LightReg>, lights: Query<(&LampLigh
     }
 }
 
-/// Local gameplay requests go to the authority. (A future network layer forwards them to the host.)
+/// Local gameplay requests go to the authority. On a client, `net.rs` forwards them to the host.
 fn route_requests(mut reqs: EventReader<WorldRequest>, mut out: EventWriter<AuthRequest>, local: Res<LocalId>) {
     for r in reqs.read() {
         out.write(AuthRequest { from: local.0, req: r.clone() });

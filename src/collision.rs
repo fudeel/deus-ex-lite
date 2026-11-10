@@ -79,6 +79,8 @@ pub enum Body {
     Camera(u16),
     Turret(u16),
     Player(u8),
+    /// head hit box of a team-match player (headshots)
+    PlayerHead(u8),
     Npc(u16),
 }
 

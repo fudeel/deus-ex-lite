@@ -267,6 +267,8 @@ pub struct NoteDef {
 
 #[derive(Resource)]
 pub struct Level {
+    /// file name without extension (e.g. "mission01")
+    pub name: String,
     pub w: i32,
     pub h: i32,
     pub tiles: Vec<Tile>,
@@ -290,6 +292,14 @@ pub struct Level {
     pub key_names: Vec<String>,
     pub glass: Vec<(i32, i32, bool)>,
     pub hash: u64,
+    /// team match: respawn points per team (empty on single-player maps)
+    pub team_spawns: [Vec<Vec3>; 2],
+    /// team match: extraction cells per team (deliver the stolen prototype here)
+    pub team_bases: [Vec<(i32, i32)>; 2],
+    /// team match: cells where the prototype may appear
+    pub steal_spots: Vec<(i32, i32)>,
+    /// team match: cells where terminals may appear (x, z, yaw facing away from the wall)
+    pub hack_spots: Vec<(i32, i32, f32)>,
 }
 
 impl Level {
@@ -347,7 +357,46 @@ impl Level {
         let c = Self::cell_of(p);
         self.extraction.contains(&c)
     }
+    /// Does this map support the team match?
+    pub fn is_team_map(&self) -> bool {
+        !self.team_spawns[0].is_empty() && !self.team_spawns[1].is_empty() && !self.steal_spots.is_empty() && self.hack_spots.len() >= 3
+    }
+    pub fn in_base(&self, team: u8, p: Vec3) -> bool {
+        let c = Self::cell_of(p);
+        self.team_bases.get(team as usize).map(|b| b.contains(&c)).unwrap_or(false)
+    }
+    pub fn base_center(&self, team: u8) -> Vec3 {
+        let Some(cells) = self.team_bases.get(team as usize).filter(|b| !b.is_empty()) else {
+            return self.team_spawns.get(team as usize).and_then(|s| s.first().copied()).unwrap_or(Vec3::ZERO);
+        };
+        let mut c = Vec3::ZERO;
+        for &(x, z) in cells {
+            c += Self::center(x, z);
+        }
+        c / cells.len() as f32
+    }
+    pub fn steal_pos(&self, spot: u8) -> Vec3 {
+        self.steal_spots.get(spot as usize).map(|&(x, z)| Self::center(x, z)).unwrap_or(Vec3::ZERO)
+    }
+    pub fn hack_pos(&self, spot: u8) -> Vec3 {
+        self.hack_spots.get(spot as usize).map(|&(x, z, _)| Self::center(x, z)).unwrap_or(Vec3::ZERO)
+    }
+    /// Walkable for team-match bots: like `nav_walkable`, plus crawl vents and their grates.
+    pub fn nav_walkable_vents(&self, x: i32, z: i32) -> bool {
+        self.nav_walkable(x, z) || (self.inb(x, z) && matches!(self.tile(x, z), Tile::Vent | Tile::Grate))
+    }
 }
+
+fn parse_team(s: Option<&&str>) -> Option<usize> {
+    match s.copied() {
+        Some("orange") | Some("0") => Some(0),
+        Some("blue") | Some("1") => Some(1),
+        _ => None,
+    }
+}
+
+pub const CAMPAIGN_LEVEL: &str = "mission01";
+pub const TEAM_LEVEL: &str = "harbor_teams";
 
 pub fn load_level(name: &str) -> Level {
     let path = format!("assets/levels/{name}.txt");
@@ -355,10 +404,15 @@ pub fn load_level(name: &str) -> Level {
         Ok(t) => t,
         Err(_) => {
             warn!("could not read {path}, using built-in copy");
-            include_str!("../assets/levels/mission01.txt").to_string()
+            match name {
+                TEAM_LEVEL => include_str!("../assets/levels/harbor_teams.txt").to_string(),
+                _ => include_str!("../assets/levels/mission01.txt").to_string(),
+            }
         }
     };
-    parse_level(&text)
+    let mut lvl = parse_level(&text);
+    lvl.name = name.to_string();
+    lvl
 }
 
 fn fnv(text: &str) -> u64 {
@@ -447,6 +501,10 @@ pub fn parse_level(text: &str) -> Level {
     let mut npc_kinds: HashMap<(i32, i32), String> = HashMap::new();
     let mut key_ids: Vec<String> = vec![];
     let mut key_names: Vec<String> = vec![];
+    let mut team_spawn_cells: [Vec<(i32, i32)>; 2] = [vec![], vec![]];
+    let mut team_base_cells: [Vec<(i32, i32)>; 2] = [vec![], vec![]];
+    let mut steal_cells: Vec<(i32, i32)> = vec![];
+    let mut hack_cells: Vec<(i32, i32)> = vec![];
 
     for line in &meta {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -538,6 +596,20 @@ pub fn parse_level(text: &str) -> Level {
                     npc_kinds.insert(c, parts.get(2).unwrap_or(&"civilian").to_string());
                 }
             }
+            "team_spawn" | "team_base" => {
+                let Some(team) = parse_team(parts.get(1)) else {
+                    warn!("level: '{line}' needs a team (orange / blue)");
+                    continue;
+                };
+                let cells = parts.iter().skip(2).filter_map(|s| parse_xy(s));
+                if parts[0] == "team_spawn" {
+                    team_spawn_cells[team].extend(cells);
+                } else {
+                    team_base_cells[team].extend(cells);
+                }
+            }
+            "steal_spot" => steal_cells.extend(parts.iter().skip(1).filter_map(|s| parse_xy(s))),
+            "hack_spot" => hack_cells.extend(parts.iter().skip(1).filter_map(|s| parse_xy(s))),
             other => warn!("unknown level meta command '{other}'"),
         }
     }
@@ -751,6 +823,7 @@ pub fn parse_level(text: &str) -> Level {
 
     // ---- entities
     let mut lvl = Level {
+        name: String::new(),
         w,
         h,
         tiles: tiles.clone(),
@@ -773,6 +846,13 @@ pub fn parse_level(text: &str) -> Level {
         key_names,
         glass: vec![],
         hash: fnv(text),
+        team_spawns: [
+            team_spawn_cells[0].iter().map(|&(x, z)| Level::center(x, z)).collect(),
+            team_spawn_cells[1].iter().map(|&(x, z)| Level::center(x, z)).collect(),
+        ],
+        team_bases: team_base_cells.clone(),
+        steal_spots: steal_cells.clone(),
+        hack_spots: vec![],
     };
     let key_index = |k: &str, ids: &Vec<String>| ids.iter().position(|s| s == k).map(|p| p as u8);
 
@@ -927,7 +1007,16 @@ pub fn parse_level(text: &str) -> Level {
         }
     }
     if lvl.spawns.is_empty() {
-        lvl.spawns.push(Level::center(1, 1));
+        lvl.spawns.push(lvl.team_spawns[0].first().copied().unwrap_or(Level::center(1, 1)));
+    }
+    // team-match terminals stand against a wall like the mission terminals
+    for &(x, z) in &hack_cells {
+        let yaw = wall_facing(x, z).unwrap_or(0.0);
+        lvl.hack_spots.push((x, z, yaw));
+        if lvl.inb(x, z) {
+            let i = lvl.idx(x, z);
+            lvl.blocked[i] = true;
+        }
     }
 
     // ---- columns
@@ -936,13 +1025,14 @@ pub fn parse_level(text: &str) -> Level {
         .map(|(x, z)| column(tile(x, z), stack_var[(z * w + x) as usize]))
         .collect();
     info!(
-        "level parsed: {}x{} cells, {} doors, {} lights, {} guards, {} pickups",
+        "level parsed: {}x{} cells, {} doors, {} lights, {} guards, {} pickups, team map: {}",
         w,
         h,
         lvl.doors.len(),
         lvl.lights.len(),
         lvl.guards.len(),
-        lvl.pickups.len()
+        lvl.pickups.len(),
+        lvl.is_team_map()
     );
     lvl
 }
